@@ -123,7 +123,7 @@ export const MaintenanceForm: React.FC<MaintenanceFormProps> = ({ organs, locati
       technicians,
       occurrence: formData.occurrence,
       hasPartExchange: formData.hasPartExchange,
-      partExchangeDetails: formData.hasPartExchange ? partDetails : undefined,
+      ...(formData.hasPartExchange ? { partExchangeDetails: partDetails } : {}),
       photos,
     };
 
