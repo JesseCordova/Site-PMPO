@@ -20,6 +20,7 @@ export const LocationDetailView: React.FC<LocationDetailViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showHistoryForOrganId, setShowHistoryForOrganId] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
   const location = state.locations.find(l => l.id === locationId);
   const locationOrgans = state.organs.filter(o => o.locationId === locationId);
