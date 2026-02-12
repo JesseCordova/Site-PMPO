@@ -2,24 +2,30 @@
 import React, { useState, useMemo } from 'react';
 import { AppState, Administration, Maintenance, Organ, DeletedItem } from '../types';
 import { ADMS } from '../constants';
-import { FileText, Download, Calendar, MapPin, Search, Sparkles, Pencil, Trash2, History, AlertCircle, Trash, FilterX } from 'lucide-react';
-import { getMaintenanceAnalysis } from '../services/geminiService';
+import { FileText, Download, Calendar, MapPin, Search, Pencil, Trash2, History, AlertCircle, Trash, FilterX, Lock } from 'lucide-react';
 
 interface ReportViewProps {
   state: AppState;
   isMaintenancePending: (id: string) => boolean;
   onEditMaintenance: (id: string) => void;
   onDeleteMaintenance: (id: string) => void;
+  isHistoryAuthorized: boolean;
+  onRequestHistoryAccess: () => void;
 }
 
-export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePending, onEditMaintenance, onDeleteMaintenance }) => {
+export const ReportView: React.FC<ReportViewProps> = ({ 
+  state, 
+  isMaintenancePending, 
+  onEditMaintenance, 
+  onDeleteMaintenance,
+  isHistoryAuthorized,
+  onRequestHistoryAccess
+}) => {
   const [activeTab, setActiveTab] = useState<'maintenances' | 'deleted'>('maintenances');
   const [filterAdm, setFilterAdm] = useState<Administration | 'all'>('all');
   const [filterLoc, setFilterLoc] = useState<string>('all');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
-  const [aiAnalysis, setAiAnalysis] = useState<Record<string, string>>({});
-  const [loadingAi, setLoadingAi] = useState<string | null>(null);
 
   const filteredLocations = useMemo(() => {
     return filterAdm === 'all' ? state.locations : state.locations.filter(l => l.adm === filterAdm);
@@ -35,14 +41,11 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
       const matchesAdm = filterAdm === 'all' || location.adm === filterAdm;
       const matchesLoc = filterLoc === 'all' || location.id === filterLoc;
       
-      const mDateString = m.date;
-      const mDate = new Date(mDateString);
-      
-      const matchesDateFrom = !dateFrom || mDate >= new Date(dateFrom);
-      const matchesDateTo = !dateTo || mDate <= new Date(dateTo);
+      const matchesDateFrom = !dateFrom || m.date >= dateFrom;
+      const matchesDateTo = !dateTo || m.date <= dateTo;
 
       return matchesAdm && matchesLoc && matchesDateFrom && matchesDateTo;
-    }).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    }).sort((a, b) => b.date.localeCompare(a.date));
   }, [state.maintenances, state.organs, state.locations, filterAdm, filterLoc, dateFrom, dateTo]);
 
   const filteredDeletedItems = useMemo(() => {
@@ -50,24 +53,13 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
       const matchesAdm = filterAdm === 'all' || item.metadata?.adm === filterAdm;
       const matchesLoc = filterLoc === 'all' || state.locations.find(l => l.id === filterLoc)?.name === item.metadata?.locationName;
       
-      const dDate = new Date(item.deletedAt);
-      const matchesDateFrom = !dateFrom || dDate >= new Date(dateFrom);
-      const matchesDateTo = !dateTo || dDate <= new Date(dateTo);
+      const dDate = item.deletedAt.split('T')[0];
+      const matchesDateFrom = !dateFrom || dDate >= dateFrom;
+      const matchesDateTo = !dateTo || dDate <= dateTo;
 
       return matchesAdm && matchesLoc && matchesDateFrom && matchesDateTo;
-    }).sort((a, b) => new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime());
+    }).sort((a, b) => b.deletedAt.localeCompare(a.deletedAt));
   }, [state.deletedItems, filterAdm, filterLoc, dateFrom, dateTo, state.locations]);
-
-  const handleAiAnalysis = async (organId: string) => {
-    const organ = state.organs.find(o => o.id === organId);
-    if (!organ) return;
-    
-    setLoadingAi(organId);
-    const history = state.maintenances.filter(m => m.organId === organId);
-    const analysis = await getMaintenanceAnalysis(history, organ);
-    setAiAnalysis(prev => ({ ...prev, [organId]: analysis }));
-    setLoadingAi(null);
-  };
 
   const clearFilters = () => {
     setFilterAdm('all');
@@ -79,7 +71,7 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
   const exportCSV = () => {
     const dataToExport = activeTab === 'maintenances' ? filteredMaintenances : filteredDeletedItems;
     if (activeTab === 'maintenances') {
-      const headers = ['Data', 'Instrumento', 'Nº Patrimonio', 'ADM', 'Local', 'Tecnicos', 'Ocorrencia'];
+      const headers = ['Data', 'Instrumento', 'Nº Patrimônio', 'ADM', 'Local', 'Técnicos', 'Ocorrência'];
       const rows = (dataToExport as Maintenance[]).map(m => {
         const organ = state.organs.find(o => o.id === m.organId);
         const location = state.locations.find(l => l.id === organ?.locationId);
@@ -89,14 +81,14 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
           organ?.patrimonyNumber || '',
           location?.adm || '',
           location?.name || '',
-          m.technicians.join(', '),
+          m.technicians.join(' & '),
           m.occurrence.replace(/,/g, ';')
         ];
       });
       const csvContent = [headers, ...rows].map(e => e.join(",")).join("\n");
       downloadFile(csvContent, "relatorio_manutencao.csv");
     } else {
-      const headers = ['Data Exclusão', 'Tipo', 'Instrumento/Info', 'Nº Patrimonio', 'ADM', 'Local', 'Motivo'];
+      const headers = ['Data Exclusão', 'Tipo', 'Instrumento/Info', 'Nº Patrimônio', 'ADM', 'Local', 'Motivo'];
       const rows = (dataToExport as DeletedItem[]).map(item => {
         const isOrgan = item.type === 'organ';
         const info = isOrgan 
@@ -147,23 +139,23 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
         >
           <FileText size={18} className={activeTab === 'maintenances' ? 'text-blue-500' : 'text-slate-400'} />
           Atendimentos Ativos
-          <span className="ml-2 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px]">
-            {filteredMaintenances.length}
-          </span>
         </button>
         <button 
-          onClick={() => setActiveTab('deleted')}
+          onClick={() => {
+            if (!isHistoryAuthorized) {
+              onRequestHistoryAccess();
+            } else {
+              setActiveTab('deleted');
+            }
+          }}
           className={`flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold transition-all ${
             activeTab === 'deleted' 
               ? 'bg-white text-slate-900 shadow-sm' 
               : 'text-slate-500 hover:text-slate-700'
           }`}
         >
-          <History size={18} className={activeTab === 'deleted' ? 'text-red-500' : 'text-slate-400'} />
+          {isHistoryAuthorized ? <History size={18} className="text-red-500" /> : <Lock size={18} className="text-slate-400" />}
           Histórico de Exclusão
-          <span className="ml-2 px-2 py-0.5 bg-slate-100 text-slate-600 rounded-md text-[10px]">
-            {filteredDeletedItems.length}
-          </span>
         </button>
       </div>
 
@@ -277,7 +269,7 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
                         <Calendar size={16} className="text-sky-300" />
-                        <span className="font-bold text-slate-800">{new Date(m.date).toLocaleDateString('pt-BR')}</span>
+                        <span className="font-bold text-slate-800">{new Date(m.date + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
                       </div>
                       <span className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold uppercase border border-slate-200">
                         {location?.adm}
@@ -290,7 +282,10 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
                         <MapPin size={14} className="text-sky-300" />
                         {location?.name} - {organ?.churchLocation}
                       </p>
-                      <p className="text-[10px] font-black text-slate-400 mt-1 uppercase tracking-widest">Nº Patrimônio: {organ?.patrimonyNumber}</p>
+                      <div className="mt-2 space-y-1">
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Patrimônio: <span className="text-slate-700">{organ?.patrimonyNumber}</span></p>
+                        <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Nº Série: <span className="text-slate-700">{organ?.serialNumber}</span></p>
+                      </div>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -307,22 +302,6 @@ export const ReportView: React.FC<ReportViewProps> = ({ state, isMaintenancePend
                     <div className="p-4 bg-slate-50 rounded-xl border border-slate-100 shadow-inner">
                       <span className="block text-xs font-semibold text-slate-400 uppercase mb-2">Ocorrência</span>
                       <p className="text-sm text-slate-700 leading-relaxed">{m.occurrence}</p>
-                    </div>
-
-                    <div className="mt-6">
-                      <button 
-                        onClick={() => handleAiAnalysis(m.organId)}
-                        disabled={loadingAi === m.organId}
-                        className="flex items-center gap-2 text-sm font-bold text-indigo-600 hover:text-indigo-800 transition-colors border border-indigo-100 px-3 py-1 rounded-lg bg-indigo-50/50"
-                      >
-                        <Sparkles size={16} className="text-sky-300" />
-                        {loadingAi === m.organId ? 'Analisando...' : 'Ver Análise Inteligente do Órgão'}
-                      </button>
-                      {aiAnalysis[m.organId] && (
-                        <div className="mt-3 p-4 bg-indigo-50 border border-indigo-100 rounded-xl text-sm text-indigo-900 leading-relaxed italic shadow-inner">
-                          {aiAnalysis[m.organId]}
-                        </div>
-                      )}
                     </div>
                   </div>
 

@@ -1,5 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
+import { collection, doc, setDoc, onSnapshot, query, where, getDocs, writeBatch } from 'firebase/firestore';
+import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { AdmSelectionView } from './components/AdmSelectionView';
 import { AdmDashboardView } from './components/AdmDashboardView';
 import { LocationDetailView } from './components/LocationDetailView';
@@ -8,7 +10,8 @@ import { MaintenanceForm } from './components/MaintenanceForm';
 import { ReportView } from './components/ReportView';
 import { AppState, Organ, Maintenance, Location, Administration, DeletedItem } from './types';
 import { INITIAL_LOCATIONS } from './constants';
-import { Home, ChevronRight, Lock, X, ArrowRight, Trash2, AlertTriangle } from 'lucide-react';
+import { Home, ChevronRight, Lock, X, ArrowRight, Trash2, HelpCircle } from 'lucide-react';
+import { db, auth } from './services/firebase';
 
 type ViewType = 'home' | 'adm-detail' | 'location-detail' | 'register-organ' | 'edit-organ' | 'register-maintenance' | 'edit-maintenance' | 'reports';
 
@@ -22,30 +25,124 @@ const App: React.FC = () => {
   // Action protection state
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
+  const [passwordHint, setPasswordHint] = useState('');
   const [reasonInput, setReasonInput] = useState('');
   const [passwordError, setPasswordError] = useState(false);
-  const [pendingAction, setPendingAction] = useState<{ type: 'organ' | 'maintenance', id: string, mode: 'edit' | 'delete' } | null>(null);
+  const [pendingAction, setPendingAction] = useState<{ type: 'organ' | 'maintenance' | 'history', id?: string, mode: 'edit' | 'delete' | 'view' } | null>(null);
+  const [isHistoryAuthorized, setIsHistoryAuthorized] = useState(false);
 
-  const [state, setState] = useState<AppState>(() => {
-    const saved = localStorage.getItem('organ_maintenance_state');
-    if (saved) return JSON.parse(saved);
-    return {
-      organs: [],
-      maintenances: [],
-      locations: INITIAL_LOCATIONS,
-      deletedItems: [],
-    };
+  const [state, setState] = useState<AppState>({
+    organs: [],
+    maintenances: [],
+    locations: INITIAL_LOCATIONS,
+    deletedItems: [],
   });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthReady, setIsAuthReady] = useState(false);
 
   useEffect(() => {
-    localStorage.setItem('organ_maintenance_state', JSON.stringify(state));
-  }, [state]);
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setIsAuthReady(true);
+        return;
+      }
+      signInAnonymously(auth).catch((err) => {
+        console.error('Erro ao autenticar anonimamente:', err);
+      });
+    });
+
+    return () => unsubAuth();
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthReady) return;
+
+    let remaining = 3;
+    const markLoaded = () => {
+      remaining -= 1;
+      if (remaining <= 0) setIsLoading(false);
+    };
+
+    const unsubOrgans = onSnapshot(
+      collection(db, 'organs'),
+      (snap) => {
+        const organs = snap.docs.map((d) => {
+          const data = d.data() as Organ;
+          return { ...data, id: data.id || d.id };
+        });
+        setState((prev) => ({ ...prev, organs }));
+        markLoaded();
+      },
+      (err) => {
+        console.error('Erro ao carregar orgaos:', err);
+        markLoaded();
+      }
+    );
+
+    const unsubMaintenances = onSnapshot(
+      collection(db, 'maintenances'),
+      (snap) => {
+        const maintenances = snap.docs.map((d) => {
+          const data = d.data() as Maintenance;
+          return { ...data, id: data.id || d.id };
+        });
+        setState((prev) => ({ ...prev, maintenances }));
+        markLoaded();
+      },
+      (err) => {
+        console.error('Erro ao carregar manutencoes:', err);
+        markLoaded();
+      }
+    );
+
+    const unsubDeleted = onSnapshot(
+      collection(db, 'deletedItems'),
+      (snap) => {
+        const deletedItems = snap.docs.map((d) => {
+          const data = d.data() as DeletedItem;
+          return { ...data, id: data.id || d.id };
+        });
+        setState((prev) => ({ ...prev, deletedItems }));
+        markLoaded();
+      },
+      (err) => {
+        console.error('Erro ao carregar historico:', err);
+        markLoaded();
+      }
+    );
+
+    return () => {
+      unsubOrgans();
+      unsubMaintenances();
+      unsubDeleted();
+    };
+  }, [isAuthReady]);
+
+  const generateHint = () => {
+    return Math.floor(1000 + Math.random() * 9000).toString();
+  };
+
+  const calculateExpectedPassword = (hint: string) => {
+    return hint.split('').map((char, index) => {
+      const digit = parseInt(char);
+      const factor = index + 1;
+      // Regra: (Dígito da dica + 1) * (Sua posição 1-4)
+      const res = (digit + 1) * factor;
+      // Caso res > 9, pega o número da segunda casa (unidade)
+      return res % 10;
+    }).join('');
+  };
 
   const isMaintenancePending = (organId: string) => {
     const organMaintenances = state.maintenances.filter(m => m.organId === organId);
     if (organMaintenances.length === 0) return true;
     
-    const lastDate = new Date(Math.max(...organMaintenances.map(m => new Date(m.date).getTime())));
+    const lastDateString = organMaintenances.reduce((prev, curr) => 
+      new Date(curr.date) > new Date(prev) ? curr.date : prev, 
+      organMaintenances[0].date
+    );
+    
+    const lastDate = new Date(lastDateString + 'T00:00:00');
     const oneYearAgo = new Date();
     oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
     
@@ -63,20 +160,27 @@ const App: React.FC = () => {
     return admLocations.some(l => isLocationPending(l.id));
   };
 
-  const handleAddOrgan = (organ: Organ) => {
-    setState(prev => ({ ...prev, organs: [...prev.organs, organ] }));
-    setView('location-detail');
+  const handleAddOrgan = async (organ: Organ) => {
+    try {
+      await setDoc(doc(db, 'organs', organ.id), organ);
+      setView('location-detail');
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao salvar o orgao.');
+    }
   };
 
-  const handleUpdateOrgan = (updatedOrgan: Organ) => {
-    setState(prev => ({
-      ...prev,
-      organs: prev.organs.map(o => o.id === updatedOrgan.id ? updatedOrgan : o)
-    }));
-    setView('location-detail');
+  const handleUpdateOrgan = async (updatedOrgan: Organ) => {
+    try {
+      await setDoc(doc(db, 'organs', updatedOrgan.id), updatedOrgan);
+      setView('location-detail');
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao atualizar o orgao.');
+    }
   };
 
-  const handleDeleteOrgan = (id: string, reason: string) => {
+  const handleDeleteOrgan = async (id: string, reason: string) => {
     const organToDelete = state.organs.find(o => o.id === id);
     if (!organToDelete) return;
 
@@ -93,29 +197,46 @@ const App: React.FC = () => {
         adm: location?.adm
       }
     };
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'deletedItems', deletedItem.id), deletedItem);
+      batch.delete(doc(db, 'organs', id));
 
-    setState(prev => ({
-      ...prev,
-      organs: prev.organs.filter(o => o.id !== id),
-      maintenances: prev.maintenances.filter(m => m.organId !== id),
-      deletedItems: [deletedItem, ...prev.deletedItems]
-    }));
+      const maintQuery = query(
+        collection(db, 'maintenances'),
+        where('organId', '==', id)
+      );
+      const maintSnap = await getDocs(maintQuery);
+      maintSnap.forEach((m) => batch.delete(doc(db, 'maintenances', m.id)));
+
+      await batch.commit();
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao excluir o orgao.');
+    }
   };
 
-  const handleAddMaintenance = (maintenance: Maintenance) => {
-    setState(prev => ({ ...prev, maintenances: [...prev.maintenances, maintenance] }));
-    setView('location-detail');
+  const handleAddMaintenance = async (maintenance: Maintenance) => {
+    try {
+      await setDoc(doc(db, 'maintenances', maintenance.id), maintenance);
+      setView('location-detail');
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao salvar a manutencao.');
+    }
   };
 
-  const handleUpdateMaintenance = (updatedMaintenance: Maintenance) => {
-    setState(prev => ({
-      ...prev,
-      maintenances: prev.maintenances.map(m => m.id === updatedMaintenance.id ? updatedMaintenance : m)
-    }));
-    if (view === 'edit-maintenance') setView('reports');
+  const handleUpdateMaintenance = async (updatedMaintenance: Maintenance) => {
+    try {
+      await setDoc(doc(db, 'maintenances', updatedMaintenance.id), updatedMaintenance);
+      if (view === 'edit-maintenance') setView('reports');
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao atualizar a manutencao.');
+    }
   };
 
-  const handleDeleteMaintenance = (id: string, reason: string) => {
+  const handleDeleteMaintenance = async (id: string, reason: string) => {
     const maintenanceToDelete = state.maintenances.find(m => m.id === id);
     if (!maintenanceToDelete) return;
 
@@ -133,31 +254,37 @@ const App: React.FC = () => {
         adm: location?.adm
       }
     };
-
-    setState(prev => ({
-      ...prev,
-      maintenances: prev.maintenances.filter(m => m.id !== id),
-      deletedItems: [deletedItem, ...prev.deletedItems]
-    }));
+    try {
+      const batch = writeBatch(db);
+      batch.set(doc(db, 'deletedItems', deletedItem.id), deletedItem);
+      batch.delete(doc(db, 'maintenances', id));
+      await batch.commit();
+    } catch (err) {
+      console.error(err);
+      alert('Erro ao excluir a manutencao.');
+    }
   };
 
-  const requestAction = (type: 'organ' | 'maintenance', id: string, mode: 'edit' | 'delete') => {
+  const requestAction = (type: 'organ' | 'maintenance' | 'history', id: string | undefined, mode: 'edit' | 'delete' | 'view') => {
     setPendingAction({ type, id, mode });
     setReasonInput('');
     setPasswordInput('');
+    setPasswordHint(generateHint());
     setShowPasswordModal(true);
   };
 
   const handleActionSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (passwordInput === '1234') {
+    const expected = calculateExpectedPassword(passwordHint);
+    
+    if (passwordInput === expected) {
       if (!pendingAction) return;
 
       if (pendingAction.mode === 'edit') {
-        if (pendingAction.type === 'organ') {
+        if (pendingAction.type === 'organ' && pendingAction.id) {
           setSelectedOrganId(pendingAction.id);
           setView('edit-organ');
-        } else if (pendingAction.type === 'maintenance') {
+        } else if (pendingAction.type === 'maintenance' && pendingAction.id) {
           setSelectedMaintenanceId(pendingAction.id);
           setView('edit-maintenance');
         }
@@ -166,11 +293,13 @@ const App: React.FC = () => {
           alert('Por favor, informe o motivo da exclusão.');
           return;
         }
-        if (pendingAction.type === 'organ') {
+        if (pendingAction.type === 'organ' && pendingAction.id) {
           handleDeleteOrgan(pendingAction.id, reasonInput);
-        } else if (pendingAction.type === 'maintenance') {
+        } else if (pendingAction.type === 'maintenance' && pendingAction.id) {
           handleDeleteMaintenance(pendingAction.id, reasonInput);
         }
+      } else if (pendingAction.mode === 'view' && pendingAction.type === 'history') {
+        setIsHistoryAuthorized(true);
       }
 
       setShowPasswordModal(false);
@@ -180,6 +309,9 @@ const App: React.FC = () => {
       setPendingAction(null);
     } else {
       setPasswordError(true);
+      // Atualiza a dica imediatamente após o erro
+      setPasswordHint(generateHint());
+      setPasswordInput(''); // Limpa o campo para nova tentativa
       setTimeout(() => setPasswordError(false), 2000);
     }
   };
@@ -240,7 +372,13 @@ const App: React.FC = () => {
 
         <main className="flex-1 overflow-y-auto p-4 md:p-8">
           <div className="max-w-6xl mx-auto">
-            {view === 'home' && (
+            {isLoading && (
+              <div className="py-16 text-center text-slate-400 font-bold tracking-widest uppercase text-sm">
+                Carregando dados...
+              </div>
+            )}
+
+            {!isLoading && view === 'home' && (
               <AdmSelectionView 
                 isAdmPending={isAdmPending} 
                 onSelectAdm={(adm) => { setSelectedAdm(adm); setView('adm-detail'); }}
@@ -248,7 +386,7 @@ const App: React.FC = () => {
               />
             )}
 
-            {view === 'adm-detail' && selectedAdm && (
+            {!isLoading && view === 'adm-detail' && selectedAdm && (
               <AdmDashboardView 
                 adm={selectedAdm}
                 state={state}
@@ -260,7 +398,7 @@ const App: React.FC = () => {
               />
             )}
 
-            {view === 'location-detail' && selectedLocationId && (
+            {!isLoading && view === 'location-detail' && selectedLocationId && (
               <LocationDetailView 
                 locationId={selectedLocationId}
                 state={state}
@@ -277,7 +415,7 @@ const App: React.FC = () => {
               />
             )}
 
-            {(view === 'register-organ' || view === 'edit-organ') && selectedLocationId && (
+            {!isLoading && (view === 'register-organ' || view === 'edit-organ') && selectedLocationId && (
               <OrganForm 
                 locationId={selectedLocationId}
                 locations={state.locations}
@@ -287,7 +425,7 @@ const App: React.FC = () => {
               />
             )}
 
-            {(view === 'register-maintenance' || view === 'edit-maintenance') && (
+            {!isLoading && (view === 'register-maintenance' || view === 'edit-maintenance') && (
               <MaintenanceForm 
                 organs={state.organs}
                 locations={state.locations}
@@ -298,12 +436,14 @@ const App: React.FC = () => {
               />
             )}
 
-            {view === 'reports' && (
+            {!isLoading && view === 'reports' && (
               <ReportView 
                 state={state}
                 isMaintenancePending={isMaintenancePending}
                 onEditMaintenance={(id) => requestAction('maintenance', id, 'edit')}
                 onDeleteMaintenance={(id) => requestAction('maintenance', id, 'delete')}
+                isHistoryAuthorized={isHistoryAuthorized}
+                onRequestHistoryAccess={() => requestAction('history', undefined, 'view')}
               />
             )}
           </div>
@@ -322,14 +462,29 @@ const App: React.FC = () => {
               </div>
               
               <div className="space-y-1">
-                <h3 className="text-2xl font-black text-slate-800 tracking-tight">
-                  {pendingAction?.mode === 'delete' ? 'Confirmar Exclusão' : 'Acesso Restrito'}
+                <h3 className="text-2xl font-black text-slate-800 tracking-tight leading-tight">
+                  {pendingAction?.mode === 'delete' ? 'Confirmar Exclusão' : pendingAction?.mode === 'view' ? 'Acesso ao Histórico' : 'Acesso Restrito'}
                 </h3>
-                <p className="text-slate-500 text-sm font-medium">
-                  {pendingAction?.mode === 'delete' 
-                    ? 'Esta ação não pode ser desfeita. Informe o motivo e a senha.' 
-                    : 'Digite a senha para habilitar a edição do registro.'}
-                </p>
+                {pendingAction?.mode === 'delete' && (
+                  <p className="text-slate-500 text-sm font-medium">
+                    Informe o motivo para prosseguir.
+                  </p>
+                )}
+              </div>
+
+              {/* Dica de Senha Dinâmica */}
+              <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-2">
+                <div className="flex items-center justify-center gap-2 text-slate-400">
+                  <HelpCircle size={14} />
+                  <span className="text-[10px] font-black uppercase tracking-widest">Dica de Acesso</span>
+                </div>
+                <div className="flex justify-center gap-3">
+                  {passwordHint.split('').map((digit, i) => (
+                    <div key={i} className="w-10 h-12 bg-white border border-slate-200 rounded-xl flex items-center justify-center text-xl font-black text-blue-600 shadow-sm">
+                      {digit}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <form onSubmit={handleActionSubmit} className="space-y-4">
@@ -341,18 +496,20 @@ const App: React.FC = () => {
                       required
                       value={reasonInput}
                       onChange={(e) => setReasonInput(e.target.value)}
-                      placeholder="Ex: Erro de cadastro, Venda do instrumento..."
-                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-red-500 focus:bg-white transition-all text-sm font-medium min-h-[100px]"
+                      placeholder="Ex: Erro de cadastro..."
+                      className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl outline-none focus:border-red-500 focus:bg-white transition-all text-sm font-medium min-h-[80px]"
                     />
                   </div>
                 )}
                 
                 <div className="space-y-1 text-left">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Senha de Autorização</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-1">Senha</label>
                   <input 
                     type="password"
+                    inputMode="numeric"
+                    autoFocus={pendingAction?.mode !== 'delete'}
                     value={passwordInput}
-                    onChange={(e) => setPasswordInput(e.target.value)}
+                    onChange={(e) => setPasswordInput(e.target.value.replace(/\D/g, '').slice(0, 4))}
                     placeholder="••••"
                     className={`w-full p-4 bg-slate-50 border rounded-2xl outline-none transition-all text-center text-lg font-bold tracking-widest focus:bg-white ${
                       passwordError ? 'border-red-500 bg-red-50 text-red-600 animate-shake' : 'border-slate-200 focus:border-blue-500'
@@ -380,7 +537,7 @@ const App: React.FC = () => {
                         : 'bg-blue-600 hover:bg-blue-700 shadow-blue-200'
                     }`}
                   >
-                    Confirmar
+                    Validar
                     <ArrowRight size={18} />
                   </button>
                 </div>

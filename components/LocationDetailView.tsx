@@ -20,6 +20,7 @@ export const LocationDetailView: React.FC<LocationDetailViewProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showHistoryForOrganId, setShowHistoryForOrganId] = useState<string | null>(null);
+  const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
 
   const location = state.locations.find(l => l.id === locationId);
   const locationOrgans = state.organs.filter(o => o.locationId === locationId);
@@ -212,6 +213,31 @@ export const LocationDetailView: React.FC<LocationDetailViewProps> = ({
         )}
       </div>
 
+
+      {/* Photo Viewer Modal */}
+      {selectedPhoto && (
+        <div 
+          className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-lg animate-in fade-in duration-300"
+          onClick={() => setSelectedPhoto(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] w-full h-full flex items-center justify-center">
+            <button 
+              onClick={() => setSelectedPhoto(null)}
+              className="absolute -top-4 -right-4 z-10 w-12 h-12 bg-white/20 text-white rounded-full flex items-center justify-center hover:bg-white/30 transition-colors"
+              title="Fechar"
+            >
+              <X size={24} />
+            </button>
+            <img 
+              src={selectedPhoto} 
+              alt="Visualização Ampliada" 
+              className="object-contain max-w-full max-h-full rounded-2xl shadow-2xl animate-in zoom-in-90 duration-300"
+              onClick={(e) => e.stopPropagation()} // Evita que o clique na imagem feche o modal
+            />
+          </div>
+        </div>
+      )}
+
       {/* History Modal */}
       {showHistoryForOrganId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -302,14 +328,15 @@ export const LocationDetailView: React.FC<LocationDetailViewProps> = ({
 
                     {m.photos.length > 0 && (
                       <div className="mt-4 flex flex-wrap gap-2">
-                         {m.photos.slice(0, 3).map((photo, i) => (
-                           <img key={i} src={photo} className="w-12 h-12 object-cover rounded-lg border border-white shadow-sm" alt="Thumbnail" />
-                         ))}
-                         {m.photos.length > 3 && (
-                           <div className="w-12 h-12 bg-slate-100 rounded-lg flex items-center justify-center text-[10px] font-bold text-slate-500 border border-slate-200">
-                             +{m.photos.length - 3}
-                           </div>
-                         )}
+                        {m.photos.map((photo, i) => (
+                          <img 
+                            key={i} 
+                            src={photo} 
+                            onClick={() => setSelectedPhoto(photo)} 
+                            className="w-16 h-16 object-cover rounded-xl border-2 border-white shadow-lg cursor-pointer transition-transform hover:scale-110 hover:shadow-md" 
+                            alt={`Thumbnail ${i+1}`} 
+                          />
+                        ))}
                       </div>
                     )}
                   </div>
@@ -329,6 +356,45 @@ export const LocationDetailView: React.FC<LocationDetailViewProps> = ({
                 Novo Registro Agora
               </button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* Photo Modal */}
+      {selectedPhoto && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setSelectedPhoto(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] rounded-3xl overflow-hidden shadow-2xl animate-in zoom-in-95 duration-300">
+            <img src={selectedPhoto} alt="Visualização Ampliada" className="w-full h-full object-contain" />
+            <button
+              onClick={() => setSelectedPhoto(null)}
+              className="absolute top-4 right-4 w-10 h-10 bg-white/20 backdrop-blur-md border border-white/30 text-white rounded-full flex items-center justify-center hover:bg-white/30 transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Photo Zoom Modal */}
+      {selectedPhoto && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setSelectedPhoto(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] w-full h-full" onClick={(e) => e.stopPropagation()}>
+            <img 
+              src={selectedPhoto} 
+              alt="Visualização Ampliada"
+              className="object-contain w-full h-full"
+            />
+            <button
+              onClick={() => setSelectedPhoto(null)}
+              className="absolute top-4 right-4 w-10 h-10 bg-white/20 backdrop-blur-md border border-white/30 text-white rounded-full flex items-center justify-center hover:bg-white/30 transition-colors"
+            >
+              <X size={20} />
+            </button>
           </div>
         </div>
       )}

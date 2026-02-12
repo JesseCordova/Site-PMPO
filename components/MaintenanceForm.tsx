@@ -4,6 +4,11 @@ import { Organ, Maintenance, Location, MaintenancePart } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { Camera, Trash2, Plus, Image as ImageIcon, Save, X } from 'lucide-react';
 
+
+
+
+
+
 interface MaintenanceFormProps {
   organs: Organ[];
   locations: Location[];
@@ -50,15 +55,53 @@ export const MaintenanceForm: React.FC<MaintenanceFormProps> = ({ organs, locati
     }
   }, [initialOrganId, initialData]);
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+
+  const compressImage = (file: File): Promise<string> => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        const scaleSize = MAX_WIDTH / img.width;
+        canvas.width = MAX_WIDTH;
+        canvas.height = img.height * scaleSize;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          resolve(canvas.toDataURL('image/jpeg', 0.7)); // Compress to JPEG with 70% quality
+        } else {
+          resolve(img.src); // Fallback if canvas context is not available
+        }
+      };
+      img.onerror = () => {
+        resolve(img.src); // Fallback on error
+      };
+    });
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (files) {
-      Array.from(files).forEach(file => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          setPhotos(prev => [...prev, reader.result as string]);
-        };
-        reader.readAsDataURL(file as File);
+      const remainingSlots = 10 - photos.length;
+      
+      if (remainingSlots <= 0) {
+        alert('Limite máximo de 10 fotos atingido.');
+        return;
+      }
+
+      const filesToProcess = Array.from(files).slice(0, remainingSlots);
+      
+      if (files.length > remainingSlots) {
+        alert(`Apenas as primeiras ${remainingSlots} fotos serão adicionadas para respeitar o limite de 10.`);
+      }
+
+      filesToProcess.forEach(async (file) => {
+        const compressedImage = await compressImage(file);
+        setPhotos((prev) => {
+          if (prev.length >= 10) return prev;
+          return [...prev, compressedImage];
+        });
       });
     }
   };
@@ -80,7 +123,7 @@ export const MaintenanceForm: React.FC<MaintenanceFormProps> = ({ organs, locati
       technicians,
       occurrence: formData.occurrence,
       hasPartExchange: formData.hasPartExchange,
-      partExchangeDetails: formData.hasPartExchange ? partDetails : undefined,
+      ...(formData.hasPartExchange ? { partExchangeDetails: partDetails } : {}),
       photos,
     };
 
@@ -214,7 +257,13 @@ export const MaintenanceForm: React.FC<MaintenanceFormProps> = ({ organs, locati
           )}
 
           <div className="md:col-span-2">
-            <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-4">Evidências Fotográficas</label>
+            <div className="flex items-center justify-between mb-4">
+              <label className="block text-xs font-black text-slate-400 uppercase tracking-widest">Evidências Fotográficas</label>
+              <span className={`text-[10px] font-black uppercase tracking-widest ${photos.length === 10 ? 'text-red-500' : 'text-slate-400'}`}>
+                {photos.length} / 10 fotos
+              </span>
+            </div>
+            
             <div className="flex flex-wrap gap-4">
               {photos.map((photo, idx) => (
                 <div key={idx} className="relative group">
@@ -228,12 +277,19 @@ export const MaintenanceForm: React.FC<MaintenanceFormProps> = ({ organs, locati
                   </button>
                 </div>
               ))}
-              <label className="w-24 h-24 flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all text-slate-400 bg-slate-50 shadow-inner">
-                <Plus size={24} className="text-sky-300" />
-                <span className="text-[10px] font-black uppercase mt-1">Add Foto</span>
-                <input type="file" multiple accept="image/*" className="hidden" onChange={handlePhotoUpload} />
-              </label>
+              
+              {photos.length < 10 && (
+                <label className="w-24 h-24 flex flex-col items-center justify-center border-2 border-dashed border-slate-200 rounded-2xl cursor-pointer hover:border-blue-400 hover:bg-blue-50 transition-all text-slate-400 bg-slate-50 shadow-inner">
+                  <Plus size={24} className="text-sky-300" />
+                  <span className="text-[10px] font-black uppercase mt-1">Add Foto</span>
+                  <input type="file" multiple accept="image/*" className="hidden" onChange={handlePhotoUpload} />
+                </label>
+              )}
             </div>
+            
+            <p className="mt-4 text-[10px] font-bold text-slate-400 uppercase tracking-widest italic">
+              Máximo 10 fotos por atendimento
+            </p>
           </div>
         </div>
 

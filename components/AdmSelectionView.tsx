@@ -38,7 +38,7 @@ export const AdmSelectionView: React.FC<AdmSelectionViewProps> = ({ isAdmPending
               </div>
 
               <div>
-                <h3 className={`text-2xl font-bold ${pending ? 'text-red-600' : 'text-slate-800'}`}>
+                <h3 className="text-2xl font-bold text-slate-800">
                   {adm}
                 </h3>
               </div>
@@ -62,7 +62,7 @@ export const AdmSelectionView: React.FC<AdmSelectionViewProps> = ({ isAdmPending
           <div className="space-y-1">
             <h3 className="text-2xl font-bold text-white">Relatórios Gerais</h3>
             <div className="flex items-center gap-1 text-indigo-400 text-xs font-bold uppercase tracking-wider">
-              Acesso Livre
+              Visualizar Registros
               <ChevronRight size={14} />
             </div>
           </div>
